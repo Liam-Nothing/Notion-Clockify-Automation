@@ -27,6 +27,13 @@ function log(message, data = null) {
     }
 }
 
+// Fonction pour formater les erreurs de manière concise
+function formatError(error) {
+    const message = error.response?.data?.message || error.message;
+    console.error(`❌ Erreur: ${message}`);
+    return message;
+}
+
 // Middleware pour vérifier le secret
 function secretMiddleware(req, res, next) {
     log('Headers reçus:', req.headers);
@@ -50,7 +57,7 @@ function loadProjectMapping() {
             return new Map(Object.entries(JSON.parse(data)));
         }
     } catch (error) {
-        console.error('Erreur lors du chargement du mapping:', error);
+        formatError(error);
     }
     return new Map();
 }
@@ -62,7 +69,7 @@ function saveProjectMapping(mapping) {
         fs.writeFileSync(MAPPING_FILE, data, 'utf8');
         log('Mapping sauvegardé:', data);
     } catch (error) {
-        console.error('Erreur lors de la sauvegarde du mapping:', error);
+        formatError(error);
     }
 }
 
@@ -126,7 +133,7 @@ async function getOrCreateProject(notionProjectId) {
         saveProjectMapping(projectMapping);
         return newProject.data;
     } catch (error) {
-        console.error('❌ Erreur lors de la gestion du projet:', error);
+        formatError(error);
         throw error;
     }
 }
@@ -154,7 +161,7 @@ async function startTimeEntry(taskId, taskName, projectId, formattedId) {
         log('Time entry créé:', response.data);
         return response.data;
     } catch (error) {
-        console.error('❌ Erreur lors du démarrage du time entry:', error);
+        formatError(error);
         throw error;
     }
 }
@@ -195,7 +202,7 @@ async function getOrCreateClockifyTask(taskName, projectId) {
         console.log('Nouvelle tâche créée:', newTask.data);
         return newTask.data;
     } catch (error) {
-        console.error('Erreur lors de la gestion de la tâche:', error);
+        formatError(error);
         return null;
     }
 }
@@ -214,7 +221,7 @@ async function stopTimeEntry(timeEntryId) {
         log('Time entry arrêté:', response.data);
         return response.data;
     } catch (error) {
-        console.error('❌ Erreur lors de l\'arrêt du time entry:', error);
+        formatError(error);
         throw error;
     }
 }
@@ -228,7 +235,7 @@ async function getCurrentUserId() {
         );
         return response.data.id;
     } catch (error) {
-        console.error('❌ Erreur lors de la récupération de l\'ID utilisateur:', error);
+        formatError(error);
         throw error;
     }
 }
@@ -248,7 +255,7 @@ async function stopAllTimeEntries() {
         console.log('✅ Tous les time entries arrêtés');
         return response.data;
     } catch (error) {
-        console.error('❌ Erreur lors de l\'arrêt des time entries:', error.response ? error.response.data : error.message);
+        formatError(error);
         throw error;
     }
 }
@@ -296,8 +303,8 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
 
         res.status(200).send('Webhook projet reçu avec succès');
     } catch (error) {
-        console.error('Erreur lors du traitement du webhook projet:', error);
-        res.status(500).send('Erreur lors du traitement du webhook projet');
+        const message = formatError(error);
+        res.status(500).send(`Erreur lors du traitement du webhook projet: ${message}`);
     }
 });
 
@@ -367,8 +374,8 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
 
         res.status(200).send('Webhook reçu avec succès');
     } catch (error) {
-        console.error('❌ Erreur lors du traitement du webhook:', error);
-        res.status(500).send('Erreur lors du traitement du webhook');
+        const message = formatError(error);
+        res.status(500).send(`Erreur lors du traitement du webhook: ${message}`);
     }
 });
 
