@@ -501,6 +501,7 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
 // Endpoint pour lister tous les projets
 app.get('/projects', async (req, res) => {
     try {
+        console.log('📋 GET /projects - Fetching all projects');
         const result = await pool.query('SELECT * FROM projects ORDER BY id');
         const projects = result.rows.map(row => ({
             id: row.id,
@@ -510,9 +511,13 @@ app.get('/projects', async (req, res) => {
             emoji: row.emoji
         }));
         
+        console.log(`✅ Found ${projects.length} projects`);
+        log('Projects:', projects);
+        
         res.json(projects);
     } catch (error) {
         const message = formatError(error);
+        console.error('❌ Error fetching projects:', message);
         res.status(500).send(`Error retrieving projects: ${message}`);
     }
 });
