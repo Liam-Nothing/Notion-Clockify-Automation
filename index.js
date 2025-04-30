@@ -30,21 +30,21 @@ function log(message, data = null) {
 // Fonction pour formater les erreurs de manière concise
 function formatError(error) {
     const message = error.response?.data?.message || error.message;
-    console.error(`❌ Erreur: ${message}`);
+    console.error(`❌ Error: ${message}`);
     return message;
 }
 
 // Middleware pour vérifier le secret
 function secretMiddleware(req, res, next) {
-    log('Headers reçus:', req.headers);
+    log('Received headers:', req.headers);
     const secretHeader = req.headers['secret'];
     
     if (secretHeader !== process.env.NOTION_WEBHOOK_SECRET) {
-        console.log('❌ Secret invalide');
-        return res.status(401).send('Secret invalide');
+        console.log('❌ Invalid secret');
+        return res.status(401).send('Invalid secret');
     }
     
-    console.log('✅ Secret valide');
+    console.log('✅ Valid secret');
     next();
 }
 
@@ -53,7 +53,7 @@ function loadProjectMapping() {
     try {
         if (fs.existsSync(MAPPING_FILE)) {
             const data = fs.readFileSync(MAPPING_FILE, 'utf8');
-            log('Mapping chargé:', data);
+            log('Mapping loaded:', data);
             return new Map(Object.entries(JSON.parse(data)));
         }
     } catch (error) {
@@ -67,7 +67,7 @@ function saveProjectMapping(mapping) {
     try {
         const data = JSON.stringify(Object.fromEntries(mapping));
         fs.writeFileSync(MAPPING_FILE, data, 'utf8');
-        log('Mapping sauvegardé:', data);
+        log('Mapping saved:', data);
     } catch (error) {
         formatError(error);
     }
@@ -97,28 +97,28 @@ function formatTaskId(properties) {
 // Fonction pour créer ou récupérer un projet dans Clockify
 async function getOrCreateProject(notionProjectId) {
     try {
-        log(`Recherche/création du projet avec ID: ${notionProjectId}`);
+        log(`Searching/creating project with ID: ${notionProjectId}`);
         
         if (projectMapping.has(notionProjectId)) {
             const existingMapping = projectMapping.get(notionProjectId);
-            log('Projet trouvé dans le mapping:', existingMapping);
+            log('Project found in mapping:', existingMapping);
             return existingMapping;
         }
 
-        log('Recherche du projet dans Clockify...');
+        log('Searching project in Clockify...');
         const response = await axios.get(`${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects`, {
             headers: clockifyConfig.headers
         });
 
         const existingProject = response.data.find(p => p.name.includes(notionProjectId));
         if (existingProject) {
-            console.log('✅ Projet existant trouvé');
+            console.log('✅ Existing project found');
             projectMapping.set(notionProjectId, existingProject);
             saveProjectMapping(projectMapping);
             return existingProject;
         }
 
-        console.log('🆕 Création d\'un nouveau projet');
+        console.log('🆕 Creating a new project');
         const newProject = await axios.post(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects`,
             {
@@ -128,7 +128,7 @@ async function getOrCreateProject(notionProjectId) {
             { headers: clockifyConfig.headers }
         );
 
-        log('Nouveau projet créé:', newProject.data);
+        log('New project created:', newProject.data);
         projectMapping.set(notionProjectId, newProject.data);
         saveProjectMapping(projectMapping);
         return newProject.data;
@@ -141,7 +141,7 @@ async function getOrCreateProject(notionProjectId) {
 // Fonction pour démarrer un time entry dans Clockify
 async function startTimeEntry(taskId, taskName, projectId, formattedId) {
     try {
-        console.log(`▶️ Démarrage: ${formattedId || taskId} - ${taskName}`);
+        console.log(`▶️ Starting: ${formattedId || taskId} - ${taskName}`);
         const description = formattedId ? `${formattedId} : ${taskName}` : `${taskId} : ${taskName}`;
         
         const timeEntryData = {
@@ -158,7 +158,7 @@ async function startTimeEntry(taskId, taskName, projectId, formattedId) {
             timeEntryData,
             { headers: clockifyConfig.headers }
         );
-        log('Time entry créé:', response.data);
+        log('Time entry created:', response.data);
         return response.data;
     } catch (error) {
         formatError(error);
@@ -170,13 +170,13 @@ async function startTimeEntry(taskId, taskName, projectId, formattedId) {
 async function getOrCreateClockifyTask(taskName, projectId) {
     try {
         if (!projectId) {
-            console.log('Pas de projet spécifié, impossible de créer/rechercher la tâche');
+            console.log('No project specified, unable to create/search task');
             return null;
         }
 
-        console.log(`Recherche/création de la tâche: ${taskName}`);
+        console.log(`Searching/creating task: ${taskName}`);
         
-        // Rechercher la tâche existante
+        // Search for existing task
         const tasksResponse = await axios.get(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects/${projectId}/tasks`,
             { headers: clockifyConfig.headers }
@@ -184,12 +184,12 @@ async function getOrCreateClockifyTask(taskName, projectId) {
 
         const existingTask = tasksResponse.data.find(t => t.name === taskName);
         if (existingTask) {
-            console.log('Tâche existante trouvée:', existingTask);
+            console.log('Existing task found:', existingTask);
             return existingTask;
         }
 
-        // Créer la nouvelle tâche
-        console.log('Création d\'une nouvelle tâche');
+        // Create new task
+        console.log('Creating a new task');
         const newTask = await axios.post(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects/${projectId}/tasks`,
             {
@@ -199,7 +199,7 @@ async function getOrCreateClockifyTask(taskName, projectId) {
             { headers: clockifyConfig.headers }
         );
 
-        console.log('Nouvelle tâche créée:', newTask.data);
+        console.log('New task created:', newTask.data);
         return newTask.data;
     } catch (error) {
         formatError(error);
@@ -210,7 +210,7 @@ async function getOrCreateClockifyTask(taskName, projectId) {
 // Fonction pour arrêter un time entry dans Clockify
 async function stopTimeEntry(timeEntryId) {
     try {
-        console.log(`⏹️ Arrêt du time entry: ${timeEntryId}`);
+        console.log(`⏹️ Stopping time entry: ${timeEntryId}`);
         const response = await axios.patch(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/time-entries/${timeEntryId}`,
             {
@@ -218,7 +218,7 @@ async function stopTimeEntry(timeEntryId) {
             },
             { headers: clockifyConfig.headers }
         );
-        log('Time entry arrêté:', response.data);
+        log('Time entry stopped:', response.data);
         return response.data;
     } catch (error) {
         formatError(error);
@@ -243,7 +243,7 @@ async function getCurrentUserId() {
 // Fonction pour arrêter tous les time entries actifs dans Clockify
 async function stopAllTimeEntries() {
     try {
-        console.log('⏹️ Arrêt de tous les time entries actifs');
+        console.log('⏹️ Stopping all active time entries');
         const userId = await getCurrentUserId();
         const response = await axios.patch(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/user/${userId}/time-entries`,
@@ -252,7 +252,7 @@ async function stopAllTimeEntries() {
             },
             { headers: clockifyConfig.headers }
         );
-        console.log('✅ Tous les time entries arrêtés');
+        console.log('✅ All time entries stopped');
         return response.data;
     } catch (error) {
         formatError(error);
@@ -263,9 +263,9 @@ async function stopAllTimeEntries() {
 // Endpoint pour recevoir les webhooks de projets Notion
 app.post('/project-webhook', secretMiddleware, async (req, res) => {
     try {
-        console.log('--- Traitement webhook projet ---');
+        console.log('📥 Project webhook received');
         const payload = req.body.data;
-        console.log('Payload reçu:', JSON.stringify(payload, null, 2));
+        //log('Received payload:', payload);
 
         // Extraire les informations du projet
         const notionProjectId = payload.id;
@@ -287,7 +287,7 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
                     },
                     { headers: clockifyConfig.headers }
                 );
-                console.log('Projet mis à jour dans Clockify:', updatedProject.data);
+                console.log('✅ Project updated:', displayName);
                 
                 // Mettre à jour le mapping
                 const mappingInfo = {
@@ -297,14 +297,14 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
                 projectMapping.set(notionProjectId, mappingInfo);
                 saveProjectMapping(projectMapping);
             } catch (error) {
-                console.error('Erreur lors de la mise à jour du nom du projet:', error);
+                console.error('❌ Project update error:', error.message);
             }
         }
 
-        res.status(200).send('Webhook projet reçu avec succès');
+        res.status(200).send('Project webhook received successfully');
     } catch (error) {
         const message = formatError(error);
-        res.status(500).send(`Erreur lors du traitement du webhook projet: ${message}`);
+        res.status(500).send(`Error processing project webhook: ${message}`);
     }
 });
 
@@ -312,7 +312,7 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
 app.post('/webhook', secretMiddleware, async (req, res) => {
     try {
         const payload = req.body.data;
-        log('Payload reçu:', payload);
+        //log('Received payload:', payload);
 
         const taskId = payload.id;
         const taskName = payload.properties['Task name'].title[0].text.content;
@@ -321,8 +321,8 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
         const formattedId = formatTaskId(payload.properties);
         const status = payload.properties.Status?.status;
 
-        console.log(`📋 ${formattedId || taskId} - ${taskName}`);
-        console.log(`📊 Status: ${status ? status.name : 'Non défini'}`);
+        console.log(`📋 Task: ${formattedId || taskId} - ${taskName}`);
+        console.log(`📊 Status: ${status ? status.name : 'Undefined'}`);
 
         const activeTask = activeTasks.get(taskId);
         const isTaskActive = !!activeTask;
@@ -350,13 +350,14 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
                     taskId: clockifyTask ? clockifyTask.id : null,
                     taskName: taskName
                 });
+                console.log('▶️ Tracking started');
             } else {
-                log('La tâche est déjà en cours de suivi:', activeTask);
+                log('Task is already being tracked:', activeTask);
             }
         } else if (status && status.id !== 'in-progress' && isTaskActive) {
             // Si c'est la dernière tâche active qui change d'état, on arrête tous les time entries
             if (activeTasks.size === 1) {
-                console.log('Dernière tâche active, arrêt de tous les time entries');
+                console.log('⏹️ Stopping all time entries');
                 await stopAllTimeEntries();
                 activeTasks.clear();
             } else {
@@ -365,17 +366,17 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
                     (activeTask.taskId && clockifyTask && activeTask.taskId === clockifyTask.id)) {
                     await stopTimeEntry(activeTask.timeEntryId);
                     activeTasks.delete(taskId);
-                    console.log('✅ Suivi arrêté');
+                    console.log('⏹️ Tracking stopped');
                 } else {
-                    log('Le changement de statut concerne une tâche différente');
+                    log('Status change for a different task');
                 }
             }
         }
 
-        res.status(200).send('Webhook reçu avec succès');
+        res.status(200).send('Webhook received successfully');
     } catch (error) {
         const message = formatError(error);
-        res.status(500).send(`Erreur lors du traitement du webhook: ${message}`);
+        res.status(500).send(`Error processing webhook: ${message}`);
     }
 });
 
@@ -392,7 +393,7 @@ app.get('/projects', (req, res) => {
         res.json(projects);
     } catch (error) {
         const message = formatError(error);
-        res.status(500).send(`Erreur lors de la récupération des projets: ${message}`);
+        res.status(500).send(`Error retrieving projects: ${message}`);
     }
 });
 
@@ -403,21 +404,21 @@ app.delete('/projects/:id', (req, res) => {
         const projects = Array.from(projectMapping.entries());
         
         if (projectId < 1 || projectId > projects.length) {
-            return res.status(404).send('Projet non trouvé');
+            return res.status(404).send('Project not found');
         }
 
         const [notionId] = projects[projectId - 1];
         projectMapping.delete(notionId);
         saveProjectMapping(projectMapping);
         
-        res.status(200).send('Projet supprimé avec succès');
+        res.status(200).send('Project deleted successfully');
     } catch (error) {
         const message = formatError(error);
-        res.status(500).send(`Erreur lors de la suppression du projet: ${message}`);
+        res.status(500).send(`Error deleting project: ${message}`);
     }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Serveur démarré sur le port ${PORT}`);
+    console.log(`Server started on port ${PORT}`);
 }); 
