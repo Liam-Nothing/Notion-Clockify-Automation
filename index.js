@@ -379,6 +379,44 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
     }
 });
 
+// Endpoint pour lister tous les projets
+app.get('/projects', (req, res) => {
+    try {
+        const projects = Array.from(projectMapping.entries()).map(([notionId, clockifyProject], index) => ({
+            id: index + 1,
+            notionId: notionId,
+            name: clockifyProject.name,
+            clockifyId: clockifyProject.id
+        }));
+        
+        res.json(projects);
+    } catch (error) {
+        const message = formatError(error);
+        res.status(500).send(`Erreur lors de la récupération des projets: ${message}`);
+    }
+});
+
+// Endpoint pour supprimer un projet
+app.delete('/projects/:id', (req, res) => {
+    try {
+        const projectId = parseInt(req.params.id);
+        const projects = Array.from(projectMapping.entries());
+        
+        if (projectId < 1 || projectId > projects.length) {
+            return res.status(404).send('Projet non trouvé');
+        }
+
+        const [notionId] = projects[projectId - 1];
+        projectMapping.delete(notionId);
+        saveProjectMapping(projectMapping);
+        
+        res.status(200).send('Projet supprimé avec succès');
+    } catch (error) {
+        const message = formatError(error);
+        res.status(500).send(`Erreur lors de la suppression du projet: ${message}`);
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Serveur démarré sur le port ${PORT}`);
