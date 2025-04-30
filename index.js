@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
+const { Pool } = require('pg');
 require('dotenv').config();
 
 const app = express();
@@ -10,11 +9,41 @@ app.use(express.json());
 // Stockage temporaire des tâches en cours
 const activeTasks = new Map();
 
-// Fichier de stockage du mapping
-const MAPPING_FILE = path.join(__dirname, 'project-mapping.json');
-
 // Configuration du niveau de verbosité
 const VERBOSE = process.env.VERBOSE === 'true';
+
+// Configuration de la base de données PostgreSQL
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+
+// Initialisation de la base de données
+async function initDatabase() {
+    try {
+        // Création de la table projects si elle n'existe pas
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY,
+                notion_id TEXT UNIQUE NOT NULL,
+                clockify_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                emoji TEXT,
+                color TEXT DEFAULT '#000000',
+                billable BOOLEAN DEFAULT true,
+                public BOOLEAN DEFAULT false,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Database initialized');
+    } catch (error) {
+        console.error('❌ Database initialization error:', error);
+        throw error;
+    }
+}
 
 // Fonction de log conditionnelle
 function log(message, data = null) {
@@ -48,33 +77,83 @@ function secretMiddleware(req, res, next) {
     next();
 }
 
-// Fonction pour charger le mapping depuis le fichier
-function loadProjectMapping() {
+// Fonction pour charger le mapping depuis la base de données
+async function loadProjectMapping() {
     try {
-        if (fs.existsSync(MAPPING_FILE)) {
-            const data = fs.readFileSync(MAPPING_FILE, 'utf8');
-            log('Mapping loaded:', data);
-            return new Map(Object.entries(JSON.parse(data)));
-        }
+        const result = await pool.query('SELECT * FROM projects');
+        const mapping = new Map();
+        result.rows.forEach(row => {
+            mapping.set(row.notion_id, {
+                id: row.clockify_id,
+                name: row.name,
+                emoji: row.emoji,
+                color: row.color,
+                billable: row.billable,
+                public: row.public
+            });
+        });
+        log('Mapping loaded from database:', mapping.size);
+        return mapping;
     } catch (error) {
         formatError(error);
+        return new Map();
     }
-    return new Map();
 }
 
-// Fonction pour sauvegarder le mapping dans le fichier
-function saveProjectMapping(mapping) {
+// Fonction pour sauvegarder le mapping dans la base de données
+async function saveProjectMapping(mapping) {
     try {
-        const data = JSON.stringify(Object.fromEntries(mapping));
-        fs.writeFileSync(MAPPING_FILE, data, 'utf8');
-        log('Mapping saved:', data);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            
+            for (const [notionId, project] of mapping) {
+                await client.query(`
+                    INSERT INTO projects (notion_id, clockify_id, name, emoji, color, billable, public)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (notion_id) 
+                    DO UPDATE SET 
+                        clockify_id = $2,
+                        name = $3,
+                        emoji = $4,
+                        color = $5,
+                        billable = $6,
+                        public = $7,
+                        updated_at = CURRENT_TIMESTAMP
+                `, [
+                    notionId,
+                    project.id,
+                    project.name,
+                    project.emoji,
+                    project.color,
+                    project.billable,
+                    project.public
+                ]);
+            }
+            
+            await client.query('COMMIT');
+            log('Mapping saved to database');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
     } catch (error) {
         formatError(error);
     }
 }
 
 // Stockage du mapping des projets Notion -> Clockify
-const projectMapping = loadProjectMapping();
+let projectMapping = new Map();
+
+// Initialisation de la base de données et chargement du mapping
+initDatabase().then(async () => {
+    projectMapping = await loadProjectMapping();
+}).catch(error => {
+    console.error('Failed to initialize database:', error);
+    process.exit(1);
+});
 
 // Configuration de l'API Clockify
 const clockifyConfig = {
@@ -119,11 +198,14 @@ async function getOrCreateProject(notionProjectId) {
         }
 
         console.log('🆕 Creating a new project');
+        // Initializing with generic name, will be updated later if needed
         const newProject = await axios.post(
             `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects`,
             {
                 name: `Project ${notionProjectId}`,
-                color: "#000000"
+                color: "#000000",
+                billable: true, // Adding required fields for Clockify API
+                public: false
             },
             { headers: clockifyConfig.headers }
         );
@@ -265,28 +347,67 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
     try {
         console.log('📥 Project webhook received');
         const payload = req.body.data;
-        //log('Received payload:', payload);
+        log('Received payload:', payload);
 
         // Extraire les informations du projet
         const notionProjectId = payload.id;
-        const projectName = payload.properties['Project name'].title[0].text.content;
+        
+        // Handle different property formats in Notion API
+        let projectName = "";
+        if (payload.properties && payload.properties['Project name'] && 
+            payload.properties['Project name'].title && 
+            payload.properties['Project name'].title.length > 0) {
+            projectName = payload.properties['Project name'].title[0].text.content;
+        } else if (payload.properties && payload.properties.Name && 
+                  payload.properties.Name.title && 
+                  payload.properties.Name.title.length > 0) {
+            projectName = payload.properties.Name.title[0].text.content;
+        } else if (payload.title && payload.title.length > 0) {
+            projectName = payload.title[0].text.content;
+        }
+        
+        // Fallback if we can't find a name
+        if (!projectName) {
+            projectName = `Project ${notionProjectId}`;
+            console.log('⚠️ Unable to find project name, using ID as fallback');
+        }
+        
+        console.log('📝 Project Name:', projectName);
+        
         const emoji = payload.icon?.type === 'emoji' ? payload.icon.emoji : null;
+        const customIcon = payload.icon?.type === 'external' ? true : false;
+        
+        if (emoji) {
+            console.log('🎨 Project emoji:', emoji);
+        } else if (customIcon) {
+            console.log('🎨 Project has custom icon');
+        }
 
         // Mettre à jour le nom du projet dans Clockify si nécessaire
         const project = await getOrCreateProject(notionProjectId);
         
         // Si le projet existe dans Clockify mais a un nom différent, le mettre à jour
-        if (project && project.name !== projectName) {
-            const displayName = emoji ? `${emoji} ${projectName}` : projectName;
+        const displayName = emoji ? `${emoji} ${projectName}` : projectName;
+        if (project && project.name !== displayName) {
             try {
+                console.log('🔄 Updating project name:', { current: project.name, new: displayName });
+                
+                // Prepare all required fields for Clockify API to avoid 400 errors
+                const updateData = {
+                    name: displayName,
+                    color: project.color || "#000000",
+                    billable: project.billable === undefined ? true : project.billable,
+                    public: project.public === undefined ? false : project.public
+                };
+                
+                log('Update project request data:', updateData);
+                
                 const updatedProject = await axios.put(
                     `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects/${project.id}`,
-                    {
-                        name: displayName,
-                        color: project.color
-                    },
+                    updateData,
                     { headers: clockifyConfig.headers }
                 );
+                
                 console.log('✅ Project updated:', displayName);
                 
                 // Mettre à jour le mapping
@@ -298,6 +419,10 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
                 saveProjectMapping(projectMapping);
             } catch (error) {
                 console.error('❌ Project update error:', error.message);
+                // More detailed error logging
+                if (error.response) {
+                    log('Error response data:', error.response.data);
+                }
             }
         }
 
@@ -381,13 +506,15 @@ app.post('/webhook', secretMiddleware, async (req, res) => {
 });
 
 // Endpoint pour lister tous les projets
-app.get('/projects', (req, res) => {
+app.get('/projects', async (req, res) => {
     try {
-        const projects = Array.from(projectMapping.entries()).map(([notionId, clockifyProject], index) => ({
-            id: index + 1,
-            notionId: notionId,
-            name: clockifyProject.name,
-            clockifyId: clockifyProject.id
+        const result = await pool.query('SELECT * FROM projects ORDER BY id');
+        const projects = result.rows.map(row => ({
+            id: row.id,
+            notionId: row.notion_id,
+            name: row.name,
+            clockifyId: row.clockify_id,
+            emoji: row.emoji
         }));
         
         res.json(projects);
@@ -398,18 +525,18 @@ app.get('/projects', (req, res) => {
 });
 
 // Endpoint pour supprimer un projet
-app.delete('/projects/:id', (req, res) => {
+app.delete('/projects/:id', async (req, res) => {
     try {
         const projectId = parseInt(req.params.id);
-        const projects = Array.from(projectMapping.entries());
+        const result = await pool.query('DELETE FROM projects WHERE id = $1 RETURNING *', [projectId]);
         
-        if (projectId < 1 || projectId > projects.length) {
+        if (result.rows.length === 0) {
             return res.status(404).send('Project not found');
         }
 
-        const [notionId] = projects[projectId - 1];
-        projectMapping.delete(notionId);
-        saveProjectMapping(projectMapping);
+        // Mettre à jour le mapping en mémoire
+        const deletedProject = result.rows[0];
+        projectMapping.delete(deletedProject.notion_id);
         
         res.status(200).send('Project deleted successfully');
     } catch (error) {
