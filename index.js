@@ -383,47 +383,40 @@ app.post('/project-webhook', secretMiddleware, async (req, res) => {
             console.log('🎨 Project has custom icon');
         }
 
-        // Mettre à jour le nom du projet dans Clockify si nécessaire
-        const project = await getOrCreateProject(notionProjectId);
-        
-        // Si le projet existe dans Clockify mais a un nom différent, le mettre à jour
-        const displayName = emoji ? `${emoji} ${projectName}` : projectName;
-        if (project && project.name !== displayName) {
-            try {
-                console.log('🔄 Updating project name:', { current: project.name, new: displayName });
-                
-                // Prepare all required fields for Clockify API to avoid 400 errors
-                const updateData = {
-                    name: displayName,
-                    color: project.color || "#000000",
-                    billable: project.billable === undefined ? true : project.billable,
-                    public: project.public === undefined ? false : project.public
-                };
-                
-                log('Update project request data:', updateData);
-                
-                const updatedProject = await axios.put(
-                    `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects/${project.id}`,
-                    updateData,
-                    { headers: clockifyConfig.headers }
-                );
-                
-                console.log('✅ Project updated:', displayName);
-                
-                // Mettre à jour le mapping
-                const mappingInfo = {
-                    ...updatedProject.data,
-                    emoji: emoji
-                };
-                projectMapping.set(notionProjectId, mappingInfo);
-                saveProjectMapping(projectMapping);
-            } catch (error) {
-                console.error('❌ Project update error:', error.message);
-                // More detailed error logging
-                if (error.response) {
-                    log('Error response data:', error.response.data);
-                }
-            }
+        // Vérifier si le projet existe déjà dans la base de données
+        const existingProject = await pool.query(
+            'SELECT * FROM projects WHERE notion_id = $1',
+            [notionProjectId]
+        );
+
+        if (existingProject.rows.length === 0) {
+            // Si le projet n'existe pas, on le crée dans Clockify
+            console.log('🆕 Creating new project in Clockify');
+            const newProject = await axios.post(
+                `${clockifyConfig.baseURL}/workspaces/${process.env.CLOCKIFY_WORKSPACE_ID}/projects`,
+                {
+                    name: `Project ${notionProjectId}`,
+                    color: "#000000",
+                    billable: true,
+                    public: false
+                },
+                { headers: clockifyConfig.headers }
+            );
+
+            // Sauvegarder le mapping dans la base de données
+            await pool.query(`
+                INSERT INTO projects (notion_id, clockify_id, name, emoji)
+                VALUES ($1, $2, $3, $4)
+            `, [
+                notionProjectId,
+                newProject.data.id,
+                projectName,
+                emoji
+            ]);
+
+            console.log('✅ New project mapping created');
+        } else {
+            console.log('ℹ️ Project mapping already exists');
         }
 
         res.status(200).send('Project webhook received successfully');
