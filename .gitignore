@@ -38,3 +38,4 @@ coverage
 
 # Project specific
 project-mapping.json 
+webhooks/*
